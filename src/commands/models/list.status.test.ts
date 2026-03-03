@@ -1,4 +1,5 @@
-import { describe, expect, it, type Mock, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, type Mock, vi } from "vitest";
+import * as modelAuth from "../../agents/model-auth.js";
 
 const mocks = vi.hoisted(() => {
   type MockAuthProfile = { provider: string; [key: string]: unknown };
@@ -106,13 +107,6 @@ vi.mock("../../agents/auth-profiles.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../agents/model-auth.js", () => ({
-  resolveEnvApiKey: mocks.resolveEnvApiKey,
-  hasUsableCustomProviderApiKey: mocks.hasUsableCustomProviderApiKey,
-  resolveUsableCustomProviderApiKey: mocks.resolveUsableCustomProviderApiKey,
-  getCustomProviderApiKey: mocks.getCustomProviderApiKey,
-}));
-
 vi.mock("../../infra/shell-env.js", () => ({
   getShellEnvAppliedKeys: mocks.getShellEnvAppliedKeys,
   shouldEnableShellEnvFallback: mocks.shouldEnableShellEnvFallback,
@@ -135,7 +129,24 @@ vi.mock("../../infra/provider-usage.js", async (importOriginal) => {
   };
 });
 
-import { modelsStatusCommand } from "./list.status-command.js";
+let modelsStatusCommand: typeof import("./list.status-command.js").modelsStatusCommand;
+let resolveEnvApiKeySpy: ReturnType<typeof vi.spyOn>;
+let getCustomProviderApiKeySpy: ReturnType<typeof vi.spyOn>;
+
+beforeAll(async () => {
+  resolveEnvApiKeySpy = vi
+    .spyOn(modelAuth, "resolveEnvApiKey")
+    .mockImplementation((provider) => mocks.resolveEnvApiKey(provider));
+  getCustomProviderApiKeySpy = vi
+    .spyOn(modelAuth, "getCustomProviderApiKey")
+    .mockImplementation((cfg, provider) => mocks.getCustomProviderApiKey(cfg, provider));
+  ({ modelsStatusCommand } = await import("./list.status-command.js"));
+});
+
+afterAll(() => {
+  resolveEnvApiKeySpy.mockRestore();
+  getCustomProviderApiKeySpy.mockRestore();
+});
 
 const defaultResolveEnvApiKeyImpl:
   | ((provider: string) => { apiKey: string; source: string } | null)

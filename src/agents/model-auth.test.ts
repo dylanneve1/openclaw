@@ -1,15 +1,11 @@
 import { streamSimpleOpenAICompletions, type Model } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthProfileStore } from "./auth-profiles.js";
-import { CUSTOM_LOCAL_AUTH_MARKER, NON_ENV_SECRETREF_MARKER } from "./model-auth-markers.js";
 import {
-  applyLocalNoAuthHeaderOverride,
-  hasUsableCustomProviderApiKey,
   requireApiKey,
   resolveApiKeyForProvider,
   resolveAwsSdkEnvVarName,
   resolveModelAuthMode,
-  resolveUsableCustomProviderApiKey,
 } from "./model-auth.js";
 
 describe("resolveAwsSdkEnvVarName", () => {
@@ -48,6 +44,16 @@ describe("resolveAwsSdkEnvVarName", () => {
 });
 
 describe("resolveModelAuthMode", () => {
+  it("returns system-keychain for claude-personal provider", () => {
+    const mode = resolveModelAuthMode("claude-personal");
+    expect(mode).toBe("system-keychain");
+  });
+
+  it("returns system-keychain for claude-personal provider (was claude-max)", () => {
+    const mode = resolveModelAuthMode("claude-personal");
+    expect(mode).toBe("system-keychain");
+  });
+
   it("returns mixed when provider has both token and api key profiles", () => {
     const store: AuthProfileStore = {
       version: 1,
@@ -98,6 +104,26 @@ describe("resolveModelAuthMode", () => {
     expect(resolveModelAuthMode("aws-bedrock", undefined, { version: 1, profiles: {} })).toBe(
       "aws-sdk",
     );
+  });
+});
+
+describe("resolveApiKeyForProvider", () => {
+  it("returns undefined apiKey with system-keychain mode for claude-personal", async () => {
+    const result = await resolveApiKeyForProvider({
+      provider: "claude-personal",
+    });
+    expect(result.apiKey).toBeUndefined();
+    expect(result.mode).toBe("system-keychain");
+    expect(result.source).toContain("system keychain");
+  });
+
+  it("returns undefined apiKey with system-keychain mode for claude-personal (was claude-max)", async () => {
+    const result = await resolveApiKeyForProvider({
+      provider: "claude-personal",
+    });
+    expect(result.apiKey).toBeUndefined();
+    expect(result.mode).toBe("system-keychain");
+    expect(result.source).toContain("system keychain");
   });
 });
 
