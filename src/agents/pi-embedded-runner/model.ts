@@ -5,7 +5,8 @@ import type { ModelDefinitionConfig } from "../../config/types.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { buildModelAliasLines } from "../model-alias-lines.js";
-import { isSecretRefHeaderValueMarker } from "../model-auth-markers.js";
+import { SYSTEM_KEYCHAIN_PROVIDERS } from "../model-auth.js";
+import { normalizeModelCompat } from "../model-compat.js";
 import { resolveForwardCompatModel } from "../model-forward-compat.js";
 import { findNormalizedProviderValue, normalizeProviderId } from "../model-selection.js";
 import {
@@ -53,76 +54,21 @@ function normalizeResolvedModel(params: { provider: string; model: Model<Api> })
 
 export { buildModelAliasLines };
 
-function resolveConfiguredProviderConfig(
-  cfg: OpenClawConfig | undefined,
-  provider: string,
-): InlineProviderConfig | undefined {
-  const configuredProviders = cfg?.models?.providers;
-  if (!configuredProviders) {
-    return undefined;
-  }
-  const exactProviderConfig = configuredProviders[provider];
-  if (exactProviderConfig) {
-    return exactProviderConfig;
-  }
-  return findNormalizedProviderValue(configuredProviders, provider);
-}
-
-function applyConfiguredProviderOverrides(params: {
-  discoveredModel: Model<Api>;
-  providerConfig?: InlineProviderConfig;
-  modelId: string;
-}): Model<Api> {
-  const { discoveredModel, providerConfig, modelId } = params;
-  if (!providerConfig) {
-    return {
-      ...discoveredModel,
-      // Discovered models originate from models.json and may contain persistence markers.
-      headers: sanitizeModelHeaders(discoveredModel.headers, { stripSecretRefMarkers: true }),
-    };
-  }
-  const configuredModel = providerConfig.models?.find((candidate) => candidate.id === modelId);
-  const discoveredHeaders = sanitizeModelHeaders(discoveredModel.headers, {
-    stripSecretRefMarkers: true,
-  });
-  const providerHeaders = sanitizeModelHeaders(providerConfig.headers, {
-    stripSecretRefMarkers: true,
-  });
-  const configuredHeaders = sanitizeModelHeaders(configuredModel?.headers, {
-    stripSecretRefMarkers: true,
-  });
-  if (!configuredModel && !providerConfig.baseUrl && !providerConfig.api && !providerHeaders) {
-    return {
-      ...discoveredModel,
-      headers: discoveredHeaders,
-    };
-  }
-  const resolvedInput = configuredModel?.input ?? discoveredModel.input;
-  const normalizedInput =
-    Array.isArray(resolvedInput) && resolvedInput.length > 0
-      ? resolvedInput.filter((item) => item === "text" || item === "image")
-      : (["text"] as Array<"text" | "image">);
-
-  return {
-    ...discoveredModel,
-    api: configuredModel?.api ?? providerConfig.api ?? discoveredModel.api,
-    baseUrl: providerConfig.baseUrl ?? discoveredModel.baseUrl,
-    reasoning: configuredModel?.reasoning ?? discoveredModel.reasoning,
-    input: normalizedInput,
-    cost: configuredModel?.cost ?? discoveredModel.cost,
-    contextWindow: configuredModel?.contextWindow ?? discoveredModel.contextWindow,
-    maxTokens: configuredModel?.maxTokens ?? discoveredModel.maxTokens,
-    headers:
-      discoveredHeaders || providerHeaders || configuredHeaders
-        ? {
-            ...discoveredHeaders,
-            ...providerHeaders,
-            ...configuredHeaders,
-          }
-        : undefined,
-    compat: configuredModel?.compat ?? discoveredModel.compat,
-  };
-}
+// The pi-ai catalog has stale/incorrect pricing for Claude Opus 4.5 and 4.6
+// (listed at $5/$25/$0.50/$6.25 per million vs actual $15/$75/$1.50/$18.75).
+// Apply corrections so cost tracking reflects actual Anthropic billing.
+// Dot-notation aliases (e.g. claude-opus-4.5) also have zero cost in the
+// catalog and are corrected here. Remove entries when upstream is fixed.
+const ANTHROPIC_CATALOG_COST_CORRECTIONS: Record<
+  string,
+  { input: number; output: number; cacheRead: number; cacheWrite: number }
+> = {
+  "claude-opus-4-5": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+  "claude-opus-4-5-20251101": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+  "claude-opus-4-6": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+  "claude-opus-4.5": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+  "claude-opus-4.6": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+};
 
 export function buildInlineProviderModels(
   providers: Record<string, InlineProviderConfig>,
@@ -275,10 +221,36 @@ export function resolveModel(
   const resolvedAgentDir = agentDir ?? resolveOpenClawAgentDir();
   const authStorage = discoverAuthStorage(resolvedAgentDir);
   const modelRegistry = discoverModels(authStorage, resolvedAgentDir);
-  const model = resolveModelWithRegistry({ provider, modelId, modelRegistry, cfg });
-  if (model) {
-    return { model, authStorage, modelRegistry };
+
+  // claude-personal runs via the claude-sdk subprocess; resolve model
+  // metadata from the anthropic catalog for cost tracking and context budgeting,
+  // then preserve the provider so downstream routing still works.
+  // Falls back to the forward-compat path for model IDs not yet in the catalog.
+  if (SYSTEM_KEYCHAIN_PROVIDERS.has(provider)) {
+    const catalogModel = modelRegistry.find("anthropic", modelId) as Model<Api> | null;
+    if (catalogModel) {
+      const costOverride = ANTHROPIC_CATALOG_COST_CORRECTIONS[modelId];
+      const model = costOverride
+        ? { ...catalogModel, provider, cost: costOverride }
+        : { ...catalogModel, provider };
+      return { model, authStorage, modelRegistry };
+    }
+    const forwardCompat = resolveForwardCompatModel("anthropic", modelId, modelRegistry);
+    if (forwardCompat) {
+      const costOverride = ANTHROPIC_CATALOG_COST_CORRECTIONS[modelId];
+      const model = costOverride
+        ? { ...forwardCompat, provider, cost: costOverride }
+        : { ...forwardCompat, provider };
+      return { model, authStorage, modelRegistry };
+    }
+    return {
+      error: buildUnknownModelError(provider, modelId),
+      authStorage,
+      modelRegistry,
+    };
   }
+
+  const model = modelRegistry.find(provider, modelId) as Model<Api> | null;
 
   return {
     error: buildUnknownModelError(provider, modelId),
