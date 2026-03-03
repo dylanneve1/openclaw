@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import * as modelAuth from "../agents/model-auth.js";
 
 const loadSessionStoreMock = vi.fn();
 const updateSessionStoreMock = vi.fn();
@@ -83,12 +84,6 @@ vi.mock("../agents/auth-profiles.js", () => ({
   resolveAuthProfileOrder: () => [],
 }));
 
-vi.mock("../agents/model-auth.js", () => ({
-  resolveEnvApiKey: () => null,
-  resolveUsableCustomProviderApiKey: () => null,
-  resolveModelAuthMode: () => "api-key",
-}));
-
 vi.mock("../infra/provider-usage.js", () => ({
   resolveUsageProviderId: () => undefined,
   loadProviderUsageSummary: async () => ({
@@ -99,7 +94,26 @@ vi.mock("../infra/provider-usage.js", () => ({
 }));
 
 import "./test-helpers/fast-core-tools.js";
-import { createOpenClawTools } from "./openclaw-tools.js";
+
+let createOpenClawTools: typeof import("./openclaw-tools.js").createOpenClawTools;
+let resolveEnvApiKeySpy: ReturnType<typeof vi.spyOn>;
+let getCustomProviderApiKeySpy: ReturnType<typeof vi.spyOn>;
+let resolveModelAuthModeSpy: ReturnType<typeof vi.spyOn>;
+
+beforeAll(async () => {
+  resolveEnvApiKeySpy = vi.spyOn(modelAuth, "resolveEnvApiKey").mockReturnValue(null);
+  getCustomProviderApiKeySpy = vi
+    .spyOn(modelAuth, "getCustomProviderApiKey")
+    .mockReturnValue(undefined);
+  resolveModelAuthModeSpy = vi.spyOn(modelAuth, "resolveModelAuthMode").mockReturnValue("api-key");
+  ({ createOpenClawTools } = await import("./openclaw-tools.js"));
+});
+
+afterAll(() => {
+  resolveEnvApiKeySpy.mockRestore();
+  getCustomProviderApiKeySpy.mockRestore();
+  resolveModelAuthModeSpy.mockRestore();
+});
 
 function resetSessionStore(store: Record<string, unknown>) {
   loadSessionStoreMock.mockClear();
