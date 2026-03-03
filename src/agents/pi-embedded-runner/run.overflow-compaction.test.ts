@@ -58,6 +58,7 @@ describe("runEmbeddedPiAgent overflow compaction trigger routing", () => {
       reason: "no oversized tool results",
     });
     mockedGlobalHookRunner.hasHooks.mockImplementation(() => false);
+    mockedPickFallbackThinkingLevel.mockReturnValue(null);
   });
 
   it("passes precomputed legacy before_agent_start result into the attempt", async () => {
@@ -271,56 +272,56 @@ describe("runEmbeddedPiAgent overflow compaction trigger routing", () => {
     expect(result.payloads?.[0]?.isError).toBe(true);
   });
 
-  it("normalizes abort-wrapped prompt errors before handing off to model fallback", async () => {
-    const promptError = Object.assign(new Error("request aborted"), {
-      name: "AbortError",
-      cause: {
-        error: {
-          code: 429,
-          message: "Resource has been exhausted (e.g. check quota).",
-          status: "RESOURCE_EXHAUSTED",
-        },
-      },
+  it("recovers stale claude-sdk resume once by forcing a fresh session retry", async () => {
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          promptError: new Error(
+            "claude_sdk_stale_resume_session: resume failed because session not found",
+          ),
+        }),
+      )
+      .mockResolvedValueOnce(makeAttemptResult({ promptError: null }));
+
+    const result = await runEmbeddedPiAgent({
+      ...overflowBaseRunParams,
+      provider: "claude-personal",
     });
-    const normalized = Object.assign(new Error("Resource has been exhausted (e.g. check quota)."), {
-      name: "FailoverError",
-      reason: "rate_limit",
-      status: 429,
-    });
 
-    mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeAttemptResult({ promptError }));
-    mockedCoerceToFailoverError.mockReturnValueOnce(normalized);
-    mockedDescribeFailoverError.mockImplementation((err: unknown) => ({
-      message: err instanceof Error ? err.message : String(err),
-      reason: err === normalized ? "rate_limit" : undefined,
-      status: err === normalized ? 429 : undefined,
-      code: undefined,
-    }));
-    mockedResolveFailoverStatus.mockReturnValueOnce(429);
-
-    await expect(
-      runEmbeddedPiAgent({
-        ...overflowBaseRunParams,
-        config: {
-          agents: {
-            defaults: {
-              model: {
-                fallbacks: ["openai/gpt-5.2"],
-              },
-            },
-          },
-        },
-      }),
-    ).rejects.toBe(normalized);
-
-    expect(mockedCoerceToFailoverError).toHaveBeenCalledWith(
-      promptError,
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(mockedRunEmbeddedAttempt).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({
-        provider: "anthropic",
-        model: "test-model",
-        profileId: "test-profile",
+        forceFreshClaudeSession: true,
       }),
     );
-    expect(mockedResolveFailoverStatus).toHaveBeenCalledWith("rate_limit");
+    expect(result.meta.error).toBeUndefined();
+  });
+
+  it("returns explicit stale-resume error when fresh-session retry still fails", async () => {
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          promptError: new Error(
+            "claude_sdk_stale_resume_session: resume failed because session not found",
+          ),
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          promptError: new Error(
+            "claude_sdk_stale_resume_session: resume failed because session not found",
+          ),
+        }),
+      );
+
+    const result = await runEmbeddedPiAgent({
+      ...overflowBaseRunParams,
+      provider: "claude-personal",
+    });
+
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(result.meta.error?.kind).toBe("claude_sdk_stale_resume");
+    expect(result.payloads?.[0]?.isError).toBe(true);
   });
 });

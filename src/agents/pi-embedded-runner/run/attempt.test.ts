@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
-import { resolveOllamaBaseUrlForRun } from "../../ollama-stream.js";
+import { resolveClaudeSdkConfig } from "../../claude-sdk-runner/prepare-session.js";
 import {
   buildAfterTurnRuntimeContext,
   composeSystemPromptWithHookContext,
   isOllamaCompatProvider,
-  prependSystemPromptAddition,
+  repairTrailingUserMessageOrphan,
   resolveAttemptFsWorkspaceOnly,
   resolveOllamaCompatNumCtxEnabled,
   resolvePromptBuildHookResult,
@@ -15,7 +15,9 @@ import {
   wrapOllamaCompatNumCtx,
   wrapStreamFnRepairMalformedToolCallArguments,
   wrapStreamFnTrimToolCallNames,
+  resolveRuntime,
 } from "./attempt.js";
+import type { EmbeddedRunAttemptParams } from "./types.js";
 
 function createOllamaProviderConfig(injectNumCtxForOpenAICompat: boolean): OpenClawConfig {
   return {
@@ -128,6 +130,67 @@ describe("composeSystemPromptWithHookContext", () => {
         appendSystemContext: "  append only  ",
       }),
     ).toBe("append only");
+  });
+});
+
+describe("repairTrailingUserMessageOrphan", () => {
+  it("repairs orphaned trailing user entries for runtime-agnostic sessions", () => {
+    const replacementMessages = [{ role: "assistant", content: "hi" }];
+    const sessionManager = {
+      getLeafEntry: vi.fn(() => ({
+        type: "message",
+        message: { role: "user" },
+        parentId: "parent-entry",
+      })),
+      branch: vi.fn(),
+      resetLeaf: vi.fn(),
+      buildSessionContext: vi.fn(() => ({ messages: replacementMessages })),
+    };
+    const agentSession = {
+      replaceMessages: vi.fn(),
+    };
+    const session = {
+      agent: {
+        replaceMessages: vi.fn(),
+      },
+    };
+
+    const repaired = repairTrailingUserMessageOrphan({
+      sessionManager: sessionManager as never,
+      agentSession: agentSession as never,
+      session: session as never,
+      runId: "run-1",
+      sessionId: "sess-1",
+    });
+
+    expect(repaired).toBe(true);
+    expect(sessionManager.branch).toHaveBeenCalledWith("parent-entry");
+    expect(sessionManager.resetLeaf).not.toHaveBeenCalled();
+    expect(agentSession.replaceMessages).toHaveBeenCalledWith(replacementMessages);
+    expect(session.agent.replaceMessages).toHaveBeenCalledWith(replacementMessages);
+  });
+
+  it("returns false when there is no trailing orphaned user entry", () => {
+    const sessionManager = {
+      getLeafEntry: vi.fn(() => ({
+        type: "message",
+        message: { role: "assistant" },
+      })),
+      branch: vi.fn(),
+      resetLeaf: vi.fn(),
+      buildSessionContext: vi.fn(),
+    };
+
+    const repaired = repairTrailingUserMessageOrphan({
+      sessionManager: sessionManager as never,
+      agentSession: { replaceMessages: vi.fn() } as never,
+      runId: "run-1",
+      sessionId: "sess-1",
+    });
+
+    expect(repaired).toBe(false);
+    expect(sessionManager.branch).not.toHaveBeenCalled();
+    expect(sessionManager.resetLeaf).not.toHaveBeenCalled();
   });
 });
 
@@ -906,7 +969,7 @@ describe("isOllamaCompatProvider", () => {
       isOllamaCompatProvider({
         provider: "custom",
         api: "openai-completions",
-        baseUrl: "https://api.openrouter.ai/v1",
+        baseUrl: "https://api.proxy.example/v1",
       }),
     ).toBe(false);
   });
@@ -1037,157 +1100,258 @@ describe("shouldInjectOllamaCompatNumCtx", () => {
   });
 });
 
-describe("decodeHtmlEntitiesInObject", () => {
-  it("decodes HTML entities in string values", () => {
-    const result = decodeHtmlEntitiesInObject(
-      "source .env &amp;&amp; psql &quot;$DB&quot; -c &lt;query&gt;",
-    );
-    expect(result).toBe('source .env && psql "$DB" -c <query>');
-  });
-
-  it("recursively decodes nested objects", () => {
-    const input = {
-      command: "cd ~/dev &amp;&amp; npm run build",
-      args: ["--flag=&quot;value&quot;", "&lt;input&gt;"],
-      nested: { deep: "a &amp; b" },
-    };
-    const result = decodeHtmlEntitiesInObject(input) as Record<string, unknown>;
-    expect(result.command).toBe("cd ~/dev && npm run build");
-    expect((result.args as string[])[0]).toBe('--flag="value"');
-    expect((result.args as string[])[1]).toBe("<input>");
-    expect((result.nested as Record<string, string>).deep).toBe("a & b");
-  });
-
-  it("passes through non-string primitives unchanged", () => {
-    expect(decodeHtmlEntitiesInObject(42)).toBe(42);
-    expect(decodeHtmlEntitiesInObject(null)).toBe(null);
-    expect(decodeHtmlEntitiesInObject(true)).toBe(true);
-    expect(decodeHtmlEntitiesInObject(undefined)).toBe(undefined);
-  });
-
-  it("returns strings without entities unchanged", () => {
-    const input = "plain string with no entities";
-    expect(decodeHtmlEntitiesInObject(input)).toBe(input);
-  });
-
-  it("decodes numeric character references", () => {
-    expect(decodeHtmlEntitiesInObject("&#39;hello&#39;")).toBe("'hello'");
-    expect(decodeHtmlEntitiesInObject("&#x27;world&#x27;")).toBe("'world'");
-  });
-});
-describe("prependSystemPromptAddition", () => {
-  it("prepends context-engine addition to the system prompt", () => {
-    const result = prependSystemPromptAddition({
-      systemPrompt: "base system",
-      systemPromptAddition: "extra behavior",
-    });
-
-    expect(result).toBe("extra behavior\n\nbase system");
-  });
-
-  it("returns the original system prompt when no addition is provided", () => {
-    const result = prependSystemPromptAddition({
-      systemPrompt: "base system",
-    });
-
-    expect(result).toBe("base system");
-  });
-});
-
-describe("buildAfterTurnRuntimeContext", () => {
-  it("uses primary model when compaction.model is not set", () => {
-    const legacy = buildAfterTurnRuntimeContext({
-      attempt: {
-        sessionKey: "agent:main:session:abc",
-        messageChannel: "slack",
-        messageProvider: "slack",
-        agentAccountId: "acct-1",
-        authProfileId: "openai:p1",
-        config: {} as OpenClawConfig,
-        skillsSnapshot: undefined,
-        senderIsOwner: true,
-        provider: "openai-codex",
-        modelId: "gpt-5.3-codex",
-        thinkLevel: "off",
-        reasoningLevel: "on",
-        extraSystemPrompt: "extra",
-        ownerNumbers: ["+15555550123"],
+describe("resolveClaudeSdkConfig", () => {
+  it("returns empty config for empty claudeSdk object", () => {
+    const params = {
+      config: {
+        agents: {
+          list: [{ id: "main", claudeSdk: {} }],
+        },
       },
-      workspaceDir: "/tmp/workspace",
-      agentDir: "/tmp/agent",
-    });
+    } as unknown as EmbeddedRunAttemptParams;
 
-    expect(legacy).toMatchObject({
-      provider: "openai-codex",
-      model: "gpt-5.3-codex",
-    });
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({});
   });
 
-  it("passes primary model through even when compaction.model is set (override resolved in compactDirect)", () => {
-    const legacy = buildAfterTurnRuntimeContext({
-      attempt: {
-        sessionKey: "agent:main:session:abc",
-        messageChannel: "slack",
-        messageProvider: "slack",
-        agentAccountId: "acct-1",
-        authProfileId: "openai:p1",
-        config: {
-          agents: {
-            defaults: {
-              compaction: {
-                model: "openrouter/anthropic/claude-sonnet-4-5",
-              },
+  it("returns config when claudeSdk has valid options", () => {
+    const params = {
+      config: {
+        agents: {
+          list: [{ id: "main", claudeSdk: { thinkingDefault: "low" } }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({ thinkingDefault: "low" });
+  });
+
+  it("returns undefined when claudeSdk is explicitly false", () => {
+    const params = {
+      config: {
+        agents: {
+          list: [{ id: "main", claudeSdk: false }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toBeUndefined();
+  });
+
+  it("falls back to defaults.claudeSdk when agent has no override", () => {
+    const params = {
+      config: {
+        agents: {
+          defaults: { claudeSdk: { thinkingDefault: "medium" } },
+          list: [{ id: "main" }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({ thinkingDefault: "medium" });
+  });
+
+  it("merges defaults.claudeSdk and agent claudeSdk with agent fields taking precedence", () => {
+    const params = {
+      config: {
+        agents: {
+          defaults: {
+            claudeSdk: {
+              thinkingDefault: "low",
+              configDir: "/tmp/default-claude-dir",
             },
           },
-        } as OpenClawConfig,
-        skillsSnapshot: undefined,
-        senderIsOwner: true,
-        provider: "openai-codex",
-        modelId: "gpt-5.3-codex",
-        thinkLevel: "off",
-        reasoningLevel: "on",
-        extraSystemPrompt: "extra",
-        ownerNumbers: ["+15555550123"],
+          list: [
+            {
+              id: "main",
+              claudeSdk: { configDir: "/tmp/agent-claude-dir" },
+            },
+          ],
+        },
       },
-      workspaceDir: "/tmp/workspace",
-      agentDir: "/tmp/agent",
-    });
+    } as unknown as EmbeddedRunAttemptParams;
 
-    // buildAfterTurnLegacyCompactionParams no longer resolves the override;
-    // compactEmbeddedPiSessionDirect does it centrally for both auto + manual paths.
-    expect(legacy).toMatchObject({
-      provider: "openai-codex",
-      model: "gpt-5.3-codex",
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({
+      thinkingDefault: "low",
+      configDir: "/tmp/agent-claude-dir",
     });
   });
-  it("includes resolved auth profile fields for context-engine afterTurn compaction", () => {
-    const legacy = buildAfterTurnRuntimeContext({
-      attempt: {
-        sessionKey: "agent:main:session:abc",
-        messageChannel: "slack",
-        messageProvider: "slack",
-        agentAccountId: "acct-1",
-        authProfileId: "openai:p1",
-        config: { plugins: { slots: { contextEngine: "lossless-claw" } } } as OpenClawConfig,
-        skillsSnapshot: undefined,
-        senderIsOwner: true,
-        provider: "openai-codex",
-        modelId: "gpt-5.3-codex",
-        thinkLevel: "off",
-        reasoningLevel: "on",
-        extraSystemPrompt: "extra",
-        ownerNumbers: ["+15555550123"],
-      },
-      workspaceDir: "/tmp/workspace",
-      agentDir: "/tmp/agent",
-    });
 
-    expect(legacy).toMatchObject({
-      authProfileId: "openai:p1",
-      provider: "openai-codex",
-      model: "gpt-5.3-codex",
-      workspaceDir: "/tmp/workspace",
-      agentDir: "/tmp/agent",
+  it("keeps defaults fields when agent claudeSdk is an empty object", () => {
+    const params = {
+      config: {
+        agents: {
+          defaults: {
+            claudeSdk: {
+              thinkingDefault: "medium",
+              configDir: "/tmp/default-claude-dir",
+            },
+          },
+          list: [{ id: "main", claudeSdk: {} }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({
+      thinkingDefault: "medium",
+      configDir: "/tmp/default-claude-dir",
     });
+  });
+
+  it("honors explicit agent false even when defaults.claudeSdk is set", () => {
+    const params = {
+      config: {
+        agents: {
+          defaults: { claudeSdk: { thinkingDefault: "medium" } },
+          list: [{ id: "main", claudeSdk: false }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toBeUndefined();
+  });
+
+  it("returns defaults when defaults.claudeSdk is an empty object", () => {
+    const params = {
+      config: {
+        agents: {
+          defaults: { claudeSdk: {} },
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "other")).toEqual({});
+  });
+
+  it("returns undefined when claudeSdk has non-sdk provider (validation rejects it)", () => {
+    const params = {
+      config: {
+        agents: {
+          list: [{ id: "main", claudeSdk: { provider: "anthropic" } }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    // Non-sdk providers are no longer valid — safeParse fails and returns undefined.
+    expect(resolveClaudeSdkConfig(params, "main")).toBeUndefined();
+  });
+
+  it("config undefined (no agents) returns undefined", () => {
+    const params = {
+      config: undefined,
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toBeUndefined();
+  });
+});
+
+describe("resolveRuntime", () => {
+  it("returns pi when resolvedProviderAuth says system-keychain but provider is not system-keychain", () => {
+    const params = {
+      provider: "not-claude-pro",
+      resolvedProviderAuth: {
+        source: "Claude Pro (system keychain)",
+        mode: "system-keychain",
+      },
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    // resolvedProviderAuth is no longer consulted; routing is driven solely by provider name.
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("returns claude-sdk for the canonical claude-personal provider", () => {
+    const params = {
+      provider: "claude-personal",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("claude-sdk");
+  });
+
+  it("returns pi for unknown claude-max-like provider (not in SYSTEM_KEYCHAIN_PROVIDERS)", () => {
+    const params = {
+      provider: "claude-max",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("returns pi for non-claude-sdk providers", () => {
+    const params = {
+      provider: "openai",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("returns pi for any provider that is not in SYSTEM_KEYCHAIN_PROVIDERS", () => {
+    const params = {
+      provider: "claude-pro-custom",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("runtimeOverride pi forces pi even when provider is a known claude-sdk provider", () => {
+    const params = {
+      provider: "claude-personal",
+      runtimeOverride: "pi",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("runtimeOverride claude-sdk forces claude-sdk even when provider is openai with no supportedProviders", () => {
+    const params = {
+      provider: "openai",
+      runtimeOverride: "claude-sdk",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("claude-sdk");
+  });
+
+  it("config undefined with a non-sdk provider returns pi", () => {
+    const params = {
+      provider: "gemini",
+      config: undefined,
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("returns pi for non-Claude model even when runtimeOverride is claude-sdk", () => {
+    const params = {
+      provider: "openai",
+      modelId: "gpt-5.1",
+      runtimeOverride: "claude-sdk",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("returns pi for non-Claude model ID regardless of provider", () => {
+    const params = {
+      provider: "google",
+      modelId: "gemini-3-pro-preview",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("pi");
+  });
+
+  it("returns claude-sdk for Claude model with claude-personal provider", () => {
+    const params = {
+      provider: "claude-personal",
+      modelId: "claude-sonnet-4-5",
+      config: {},
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveRuntime(params, "main")).toBe("claude-sdk");
   });
 });
