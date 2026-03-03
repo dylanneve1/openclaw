@@ -9,6 +9,7 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 const log = createSubsystemLogger("commands/agent");
 import {
   listAgentIds,
+  resolveAgentConfig,
   resolveAgentDir,
   resolveEffectiveModelFallbacks,
   resolveSessionAgentId,
@@ -560,7 +561,6 @@ async function prepareAgentCommandExecution(
       );
     }
   }
-  const agentCfg = cfg.agents?.defaults;
   const configuredModel = resolveConfiguredModelRef({
     cfg,
     defaultProvider: DEFAULT_PROVIDER,
@@ -625,6 +625,14 @@ async function prepareAgentCommandExecution(
       sessionKey: sessionKey ?? opts.sessionKey?.trim(),
       config: cfg,
     });
+  const agentThinkingDefault = resolveAgentConfig(cfg, sessionAgentId)?.thinkingDefault;
+  const agentCfg =
+    agentThinkingDefault !== undefined
+      ? {
+          ...cfg.agents?.defaults,
+          thinkingDefault: agentThinkingDefault,
+        }
+      : cfg.agents?.defaults;
   const outboundSession = buildOutboundSessionContext({
     cfg,
     agentId: sessionAgentId,
@@ -1030,6 +1038,7 @@ async function agentCommandInternal(
         provider,
         model,
         catalog: catalogForThinking,
+        agentThinkingDefault: agentCfg?.thinkingDefault,
       });
     }
     if (resolvedThinkLevel === "xhigh" && !supportsXHighThinking(provider, model)) {

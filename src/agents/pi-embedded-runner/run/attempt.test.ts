@@ -1117,12 +1117,14 @@ describe("resolveClaudeSdkConfig", () => {
     const params = {
       config: {
         agents: {
-          list: [{ id: "main", claudeSdk: { thinkingDefault: "low" } }],
+          list: [{ id: "main", claudeSdk: { configDir: "/tmp/agent-claude-dir" } }],
         },
       },
     } as unknown as EmbeddedRunAttemptParams;
 
-    expect(resolveClaudeSdkConfig(params, "main")).toEqual({ thinkingDefault: "low" });
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({
+      configDir: "/tmp/agent-claude-dir",
+    });
   });
 
   it("returns undefined when claudeSdk is explicitly false", () => {
@@ -1141,13 +1143,15 @@ describe("resolveClaudeSdkConfig", () => {
     const params = {
       config: {
         agents: {
-          defaults: { claudeSdk: { thinkingDefault: "medium" } },
+          defaults: { claudeSdk: { configDir: "/tmp/default-claude-dir" } },
           list: [{ id: "main" }],
         },
       },
     } as unknown as EmbeddedRunAttemptParams;
 
-    expect(resolveClaudeSdkConfig(params, "main")).toEqual({ thinkingDefault: "medium" });
+    expect(resolveClaudeSdkConfig(params, "main")).toEqual({
+      configDir: "/tmp/default-claude-dir",
+    });
   });
 
   it("merges defaults.claudeSdk and agent claudeSdk with agent fields taking precedence", () => {
@@ -1156,7 +1160,6 @@ describe("resolveClaudeSdkConfig", () => {
         agents: {
           defaults: {
             claudeSdk: {
-              thinkingDefault: "low",
               configDir: "/tmp/default-claude-dir",
             },
           },
@@ -1171,7 +1174,6 @@ describe("resolveClaudeSdkConfig", () => {
     } as unknown as EmbeddedRunAttemptParams;
 
     expect(resolveClaudeSdkConfig(params, "main")).toEqual({
-      thinkingDefault: "low",
       configDir: "/tmp/agent-claude-dir",
     });
   });
@@ -1182,7 +1184,6 @@ describe("resolveClaudeSdkConfig", () => {
         agents: {
           defaults: {
             claudeSdk: {
-              thinkingDefault: "medium",
               configDir: "/tmp/default-claude-dir",
             },
           },
@@ -1192,7 +1193,6 @@ describe("resolveClaudeSdkConfig", () => {
     } as unknown as EmbeddedRunAttemptParams;
 
     expect(resolveClaudeSdkConfig(params, "main")).toEqual({
-      thinkingDefault: "medium",
       configDir: "/tmp/default-claude-dir",
     });
   });
@@ -1201,7 +1201,7 @@ describe("resolveClaudeSdkConfig", () => {
     const params = {
       config: {
         agents: {
-          defaults: { claudeSdk: { thinkingDefault: "medium" } },
+          defaults: { claudeSdk: { configDir: "/tmp/default-claude-dir" } },
           list: [{ id: "main", claudeSdk: false }],
         },
       },
@@ -1220,6 +1220,18 @@ describe("resolveClaudeSdkConfig", () => {
     } as unknown as EmbeddedRunAttemptParams;
 
     expect(resolveClaudeSdkConfig(params, "other")).toEqual({});
+  });
+
+  it("returns undefined when claudeSdk includes deprecated thinkingDefault", () => {
+    const params = {
+      config: {
+        agents: {
+          list: [{ id: "main", claudeSdk: { thinkingDefault: "low" } }],
+        },
+      },
+    } as unknown as EmbeddedRunAttemptParams;
+
+    expect(resolveClaudeSdkConfig(params, "main")).toBeUndefined();
   });
 
   it("returns undefined when claudeSdk has non-sdk provider (validation rejects it)", () => {

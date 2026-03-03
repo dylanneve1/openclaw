@@ -736,15 +736,11 @@ describe("model-selection", () => {
       expect(resolveAnthropicOpusThinking(cfg)).toBe("high");
     });
 
-    it("accepts legacy duplicated OpenRouter keys for per-model thinking", () => {
+    it("prefers per-agent thinkingDefault over global thinkingDefault", () => {
       const cfg = {
         agents: {
           defaults: {
-            models: {
-              "openrouter/openrouter/hunter-alpha": {
-                params: { thinking: "high" },
-              },
-            },
+            thinkingDefault: "low",
           },
         },
       } as OpenClawConfig;
@@ -752,10 +748,12 @@ describe("model-selection", () => {
       expect(
         resolveThinkingDefault({
           cfg,
-          provider: "openrouter",
-          model: "openrouter/hunter-alpha",
+          provider: "anthropic",
+          model: "claude-opus-4-6",
+          catalog: ANTHROPIC_OPUS_CATALOG,
+          agentThinkingDefault: "adaptive",
         }),
-      ).toBe("high");
+      ).toBe("adaptive");
     });
 
     it("accepts per-model params.thinking=adaptive", () => {

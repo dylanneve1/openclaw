@@ -1,4 +1,5 @@
 import {
+  resolveAgentConfig,
   resolveAgentDir,
   resolveDefaultAgentId,
   resolveSessionAgentId,
@@ -163,14 +164,7 @@ export async function buildStatusReply(params: {
       })
     : selectedModelAuth;
   const agentDefaults = cfg.agents?.defaults ?? {};
-  const effectiveFastMode =
-    resolvedFastMode ??
-    resolveFastModeState({
-      cfg,
-      provider,
-      model,
-      sessionEntry,
-    }).enabled;
+  const agentThinkingDefault = resolveAgentConfig(cfg, statusAgentId)?.thinkingDefault;
   const statusText = buildStatusMessage({
     config: cfg,
     agent: {
@@ -180,7 +174,7 @@ export async function buildStatusReply(params: {
         primary: `${provider}/${model}`,
       },
       contextTokens,
-      thinkingDefault: agentDefaults.thinkingDefault,
+      thinkingDefault: agentThinkingDefault ?? agentDefaults.thinkingDefault,
       verboseDefault: agentDefaults.verboseDefault,
       elevatedDefault: agentDefaults.elevatedDefault,
     },
