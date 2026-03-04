@@ -668,11 +668,22 @@ export function resolveThinkingDefault(params: {
   if (isThinkingLevel(configured)) {
     return configured;
   }
-  return resolveThinkingDefaultForModel({
-    provider: params.provider,
-    model: params.model,
-    catalog: params.catalog,
-  });
+  const isAnthropicFamilyModel =
+    normalizedProvider === "anthropic" ||
+    normalizedProvider === "claude-personal" ||
+    normalizedProvider === "amazon-bedrock" ||
+    modelLower.includes("anthropic/") ||
+    modelLower.includes(".anthropic.");
+  if (isAnthropicFamilyModel && CLAUDE_46_MODEL_RE.test(modelLower)) {
+    return "adaptive";
+  }
+  const candidate = params.catalog?.find(
+    (entry) => entry.provider === params.provider && entry.id === params.model,
+  );
+  if (candidate?.reasoning) {
+    return "low";
+  }
+  return "off";
 }
 
 /** Default reasoning level when session/directive do not set it: "on" if model supports reasoning, else "off". */
