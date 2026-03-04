@@ -199,7 +199,7 @@ function resolveAnthropic46ForwardCompatModel(params: {
 }): Model<Api> | undefined {
   const { provider, modelId, modelRegistry, dashModelId, dotModelId } = params;
   const normalizedProvider = normalizeProviderId(provider);
-  if (normalizedProvider !== "anthropic") {
+  if (normalizedProvider !== "anthropic" && normalizedProvider !== "claude-personal") {
     return undefined;
   }
 

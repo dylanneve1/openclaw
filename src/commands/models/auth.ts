@@ -16,7 +16,7 @@ import {
   CLAUDE_SDK_POLICY_ACKNOWLEDGEMENT_MESSAGE,
   emitClaudeSdkPolicyWarningLines,
 } from "../../agents/claude-sdk-runner/logging.js";
-import { isSystemKeychainProvider, SYSTEM_KEYCHAIN_PROVIDERS } from "../../agents/model-auth.js";
+import { isSystemKeychainProvider } from "../../agents/model-auth.js";
 import { normalizeProviderId } from "../../agents/model-selection.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { formatCliCommand } from "../../cli/command-format.js";
@@ -275,7 +275,7 @@ export async function modelsAuthAddCommand(_opts: Record<string, never>, runtime
   const method = (await select({
     message: "Auth method",
     options: [
-      ...(SYSTEM_KEYCHAIN_PROVIDERS.has(providerId)
+      ...(isSystemKeychainProvider(providerId)
         ? [
             {
               value: "setup-claude-pro",
