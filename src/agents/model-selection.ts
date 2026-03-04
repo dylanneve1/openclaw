@@ -634,32 +634,34 @@ export function resolveThinkingDefault(params: {
   provider: string;
   model: string;
   catalog?: ModelCatalogEntry[];
-  agentThinkingDefault?: ThinkLevel;
+  agentId?: string;
 }): ThinkLevel {
-  const _normalizedProvider = normalizeProviderId(params.provider);
-  const _modelLower = params.model.toLowerCase();
-  const configuredModels = params.cfg.agents?.defaults?.models;
-  const canonicalKey = modelKey(params.provider, params.model);
-  const legacyKey = legacyModelKey(params.provider, params.model);
+  const isThinkingLevel = (value: unknown): value is ThinkLevel =>
+    value === "off" ||
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "adaptive";
+
+  const normalizedProvider = normalizeProviderId(params.provider);
+  const modelLower = params.model.toLowerCase();
   const perModelThinking =
-    configuredModels?.[canonicalKey]?.params?.thinking ??
-    (legacyKey ? configuredModels?.[legacyKey]?.params?.thinking : undefined);
-  if (
-    perModelThinking === "off" ||
-    perModelThinking === "minimal" ||
-    perModelThinking === "low" ||
-    perModelThinking === "medium" ||
-    perModelThinking === "high" ||
-    perModelThinking === "xhigh" ||
-    perModelThinking === "adaptive"
-  ) {
+    params.cfg.agents?.defaults?.models?.[modelKey(params.provider, params.model)]?.params
+      ?.thinking;
+  if (isThinkingLevel(perModelThinking)) {
     return perModelThinking;
   }
-  if (params.agentThinkingDefault) {
-    return params.agentThinkingDefault;
+  const perAgentConfigured =
+    typeof params.agentId === "string" && params.agentId.trim()
+      ? resolveAgentConfig(params.cfg, params.agentId)?.thinkingDefault
+      : undefined;
+  if (isThinkingLevel(perAgentConfigured)) {
+    return perAgentConfigured;
   }
   const configured = params.cfg.agents?.defaults?.thinkingDefault;
-  if (configured) {
+  if (isThinkingLevel(configured)) {
     return configured;
   }
   return resolveThinkingDefaultForModel({

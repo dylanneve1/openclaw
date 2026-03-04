@@ -763,12 +763,6 @@ export const AgentEntrySchema = z
     workspace: z.string().optional(),
     agentDir: z.string().optional(),
     model: AgentModelSchema.optional(),
-    skills: z.array(z.string()).optional(),
-    memorySearch: MemorySearchSchema,
-    humanDelay: HumanDelaySchema.optional(),
-    heartbeat: HeartbeatSchema,
-    identity: IdentitySchema,
-    groupChat: GroupChatSchema,
     thinkingDefault: z
       .union([
         z.literal("off"),
@@ -780,6 +774,12 @@ export const AgentEntrySchema = z
         z.literal("adaptive"),
       ])
       .optional(),
+    skills: z.array(z.string()).optional(),
+    memorySearch: MemorySearchSchema,
+    humanDelay: HumanDelaySchema.optional(),
+    heartbeat: HeartbeatSchema,
+    identity: IdentitySchema,
+    groupChat: GroupChatSchema,
     subagents: z
       .object({
         allowAgents: z.array(z.string()).optional(),

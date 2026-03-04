@@ -28,6 +28,7 @@ import {
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { FailoverError, resolveFailoverStatus } from "../failover-error.js";
 import { ensureAuthProfileStore } from "../model-auth.js";
+import { resolveThinkingDefault } from "../model-selection.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
 import {
   formatBillingErrorMessage,
@@ -449,7 +450,15 @@ export async function runEmbeddedPiAgent(
         workspaceResolution.agentId,
       );
       const preferredProfileId = params.authProfileId?.trim();
-      const initialThinkLevel = params.thinkLevel ?? "off";
+
+      const initialThinkLevel =
+        params.thinkLevel ??
+        resolveThinkingDefault({
+          cfg: params.config ?? {},
+          provider,
+          model: modelId,
+          agentId: workspaceResolution.agentId,
+        });
       let thinkLevel = initialThinkLevel;
       const attemptedThinking = new Set<ThinkLevel>();
       const authController = await createRunAuthProfileFailoverController({

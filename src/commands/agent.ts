@@ -1038,7 +1038,7 @@ async function agentCommandInternal(
         provider,
         model,
         catalog: catalogForThinking,
-        agentThinkingDefault: agentCfg?.thinkingDefault,
+        agentId: sessionAgentId,
       });
     }
     if (resolvedThinkLevel === "xhigh" && !supportsXHighThinking(provider, model)) {
