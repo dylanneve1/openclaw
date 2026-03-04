@@ -49,8 +49,13 @@ describe("resolveModelAuthMode", () => {
     expect(mode).toBe("system-keychain");
   });
 
-  it("returns system-keychain for claude-personal provider (was claude-max)", () => {
-    const mode = resolveModelAuthMode("claude-personal");
+  it("returns system-keychain for claude-max legacy alias", () => {
+    const mode = resolveModelAuthMode("claude-max");
+    expect(mode).toBe("system-keychain");
+  });
+
+  it("returns system-keychain for claude-pro legacy alias", () => {
+    const mode = resolveModelAuthMode("claude-pro");
     expect(mode).toBe("system-keychain");
   });
 

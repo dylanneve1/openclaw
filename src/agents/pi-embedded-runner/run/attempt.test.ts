@@ -1280,13 +1280,13 @@ describe("resolveRuntime", () => {
     expect(resolveRuntime(params, "main")).toBe("claude-sdk");
   });
 
-  it("returns pi for unknown claude-max-like provider (not in SYSTEM_KEYCHAIN_PROVIDERS)", () => {
+  it("returns claude-sdk for claude-max legacy alias", () => {
     const params = {
       provider: "claude-max",
       config: {},
     } as unknown as EmbeddedRunAttemptParams;
 
-    expect(resolveRuntime(params, "main")).toBe("pi");
+    expect(resolveRuntime(params, "main")).toBe("claude-sdk");
   });
 
   it("returns pi for non-claude-sdk providers", () => {

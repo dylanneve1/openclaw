@@ -93,6 +93,10 @@ export function normalizeProviderId(provider: string): string {
   if (normalized === "bytedance" || normalized === "doubao") {
     return "volcengine";
   }
+  // claude-pro and claude-max are legacy names for claude-personal.
+  if (normalized === "claude-pro" || normalized === "claude-max") {
+    return "claude-personal";
+  }
   return normalized;
 }
 
