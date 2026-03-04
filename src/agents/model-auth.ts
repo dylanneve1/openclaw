@@ -35,6 +35,13 @@ export { ensureAuthProfileStore, resolveAuthProfileOrder } from "./auth-profiles
  */
 export const SYSTEM_KEYCHAIN_PROVIDERS = new Set(["claude-personal"]);
 
+export function isSystemKeychainProvider(provider: string | undefined): boolean {
+  if (typeof provider !== "string" || provider.trim().length === 0) {
+    return false;
+  }
+  return SYSTEM_KEYCHAIN_PROVIDERS.has(normalizeProviderId(provider));
+}
+
 const AWS_BEARER_ENV = "AWS_BEARER_TOKEN_BEDROCK";
 const AWS_ACCESS_KEY_ENV = "AWS_ACCESS_KEY_ID";
 const AWS_SECRET_KEY_ENV = "AWS_SECRET_ACCESS_KEY";
@@ -287,7 +294,7 @@ export async function resolveApiKeyForProvider(params: {
 
   // System-keychain providers use implicit auth (e.g. ~/.claude/ OAuth) and
   // never go through the conventional API-key / profile resolution flow.
-  if (SYSTEM_KEYCHAIN_PROVIDERS.has(provider)) {
+  if (isSystemKeychainProvider(provider)) {
     return {
       apiKey: undefined,
       mode: "system-keychain" as const,
@@ -449,7 +456,7 @@ export function resolveModelAuthMode(
   }
 
   // System-keychain providers use implicit auth (e.g. Mac OS Keychain for Claude Subscription)
-  if (SYSTEM_KEYCHAIN_PROVIDERS.has(resolved)) {
+  if (isSystemKeychainProvider(resolved)) {
     return "system-keychain";
   }
 
